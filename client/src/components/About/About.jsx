@@ -7,6 +7,10 @@ import {
   FaLinkedin,
   FaGithub,
 } from "react-icons/fa";
+import img1 from "./assets/nancy.jpg"
+import img2 from "./assets/pragya.jpg"
+import img3 from "./assets/abhinav.jpg"
+import img4 from "./assets/anuj.jpg"
 
 const About = () => {
   const [showFaq, setShowfaq] = useState({});
@@ -25,7 +29,7 @@ const About = () => {
   };
 
   const stats = [
-    { value: "100+", label: "Client Satisfaction" },
+    { value: "99%", label: "Client Satisfaction" },
     { value: "24/7", label: "Support Available" },
     { value: "100+", label: "Projects Completed" },
   ];
@@ -56,39 +60,39 @@ const About = () => {
   const developers = [
     {
       name: "Anuj Kumar Singh",
-      image: "john.jpg",
-      mail: "mailto:johndoe@example.com",
-      linkedin: "https://linkedin.com/in/johndoe",
-      github: "https://github.com/johndoe",
+      image: img4,
+      mail: "anujkumar37055@gmail.com",
+      linkedin: "https://www.linkedin.com/in/anuj-kumar-singh-64a81125a",
+      github: "https://github.com/anuj8155",
     },
     {
       name: "Nancy Gupta",
-      image: "jane.jpg",
+      image: img1,
       mail: "nancyg8029@gmail.com",
-      linkedin: "https://linkedin.com/in/janesmith",
-      github: "https://github.com/janesmith",
+      linkedin: "http://www.linkedin.com/in/nancy-gupta-784b5025a",
+      github: "https://github.com/Nancy0801",
     },
     {
       name: "Pragya Sharma",
-      image: "mike.jpg",
-      mail: "mailto:mikejohnson@example.com",
-      linkedin: "https://linkedin.com/in/mikejohnson",
-      github: "https://github.com/mikejohnson",
+      image: img2,
+      mail: "pragyaxibs4834@gmail.com",
+      linkedin: "https://www.linkedin.com/in/pragya-sharma-4a2136260?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app",
+      github: "https://github.com/pragya79",
     },
     {
       name: "Abhinav",
-      image: "emma.jpg",
-      mail: "mailto:emmabrown@example.com",
-      linkedin: "https://linkedin.com/in/emmabrown",
-      github: "https://github.com/emmabrown",
+      image: img3,
+      mail: "abhinav234765@gmail.com",
+      linkedin: "https://www.linkedin.com/in/abhinav-kumar-jha-7b406b260",
+      github: "https://github.com/Abhinav-alec",
     },
   ];
 
   return (
     <div className="about-page">
       {/* Hero Section */}
-      <div className="about-hero-section">
-        <div className="about-hero-content">
+      <div className="hero-section">
+        <div className="hero-content">
           <h1>About OmniCast</h1>
           <p>
             OmniCast is an innovative live-streaming platform designed to
@@ -133,7 +137,7 @@ const About = () => {
             <div key={index} className="faq-box">
               <div className="faq-question" onClick={() => toggleFaq(index)}>
                 <h3>{faq.question}</h3>
-                {showFaq[index] ? <FaMinus className="minus"/> : <FaPlus className="plus"/>}
+                {showFaq[index] ? <FaMinus /> : <FaPlus />}
               </div>
               {showFaq[index] && <p className="faq-answer">{faq.answer}</p>}
             </div>
@@ -147,7 +151,7 @@ const About = () => {
         <div className="team-container">
           {developers.map((dev, index) => (
             <div key={index} className="team-card">
-              <img src={dev.image} alt={dev.name} className="team-image" />
+              <img src={dev.image} className="team-image" />
               <div className="team-info">
                 <h3>{dev.name}</h3>
                 <div className="team-socials">
