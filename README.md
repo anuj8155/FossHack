@@ -50,17 +50,23 @@ Make sure you have the following installed:
 
 ## 🔧 Installation
 
+### Step 1: Clone the Repository
 ```sh
-# Clone the repository
-git clone <repository-url>
+git clone https://github.com/anuj8155/FossHack.git
+```
 
-# Navigate to the project directory
+### Step 2: Navigate to the Project Directory
+```sh
 cd OmniCast
+```
 
-# Install dependencies
+### Step 3: Install Dependencies
+```sh
 npm install  # or yarn install
+```
 
-# Start the development server
+### Step 4: Start the Development Server
+```sh
 npm start  # or yarn start
 ```
 
@@ -69,6 +75,11 @@ npm start  # or yarn start
 ```
 OmniCast/
 │── client/  # Frontend (React)
+│   │── src/
+│   │   │── components/  # Reusable UI components
+│   │   │── pages/  # Main pages like Home, Login, Dashboard
+│   │   │── assets/  # Static assets like images, stylesheets
+│   │   └── App.js  # Main React app file
 │── server/  # Backend (Node.js, Express, WebSockets, Streaming)
 │   │── model/
 │   │   └── User.js
@@ -81,24 +92,14 @@ OmniCast/
 │── README.md
 ```
 
-## 📌 Components Breakdown
+## 📌 Workflow
 
-### 🎥 Services (Core Functionality)
-The `Services` component powers the entire application by handling:
-- **RTMP streaming** for seamless video transmission.
-- **FFmpeg media processing** for format conversion and encoding.
-- **Socket.io real-time communication** for instant updates.
-- **Live chat integration** for audience interaction.
-- **Docker-based deployment** on an Ubuntu OS.
-- **Multi-platform streaming support** for broadcasting on **YouTube, Instagram, etc.**
-
-### 🏠 Other Components
-- **About/** - Displays information about OmniCast.
-- **Login/** - User authentication & sign-in system.
-- **Navbar/** - Navigation bar for easy access.
-- **DropDown/** - UI dropdown menu for settings/options.
-- **Notification/** - Real-time alerts and system messages.
-- **Starter/** - Initial landing page.
+1. **User starts a live stream.**
+2. **OmniCast processes the media using FFmpeg.**
+3. **The processed stream is transmitted via RTMP to multiple platforms (YouTube, Instagram, etc.).**
+4. **Users interact in real time via Socket.io-powered live chat.**
+5. **Streams are securely stored and managed using Cloudinary.**
+6. **The entire application runs in a scalable Dockerized environment.**
 
 ## 🔮 Future Scope
 
@@ -126,9 +127,27 @@ OmniCast is licensed under [MIT License](LICENSE).
 
 For questions, feedback, or collaboration opportunities, contact:
 
-- **Email**: [contact@omnicast.com](mailto:contact@omnicast.com)
-- **GitHub**: [OmniCast](https://github.com/OmniCast)
-- **Website**: [www.omnicast.com](https://www.omnicast.com)
+### 👨‍💻 Developers
+
+- **Anuj Kumar Singh**  
+  - ✉️ [anujkumar37055@gmail.com](mailto:anujkumar37055@gmail.com)  
+  - 🔗 [LinkedIn](https://www.linkedin.com/in/anuj-kumar-singh-64a81125a)  
+  - 🐙 [GitHub](https://github.com/anuj8155)
+
+- **Nancy Gupta**  
+  - ✉️ [nancyg8029@gmail.com](mailto:nancyg8029@gmail.com)  
+  - 🔗 [LinkedIn](http://www.linkedin.com/in/nancy-gupta-784b5025a)  
+  - 🐙 [GitHub](https://github.com/Nancy0801)
+
+- **Pragya Sharma**  
+  - ✉️ [pragyaxibs4834@gmail.com](mailto:pragyaxibs4834@gmail.com)  
+  - 🔗 [LinkedIn](https://www.linkedin.com/in/pragya-sharma-4a2136260)  
+  - 🐙 [GitHub](https://github.com/pragya79)
+
+- **Abhinav Kumar Jha**  
+  - ✉️ [abhinav234765@gmail.com](mailto:abhinav234765@gmail.com)  
+  - 🔗 [LinkedIn](https://www.linkedin.com/in/abhinav-kumar-jha-7b406b260)  
+  - 🐙 [GitHub](https://github.com/Abhinav-alec)
 
 🚀 **OmniCast - One Broadcast, Infinite Reach!**
 
