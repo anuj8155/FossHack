@@ -71,7 +71,7 @@ const Starter = ({ userCount, isLoggedIn }) => {
             {/* User Registration Card */}
             <div className="card">
               <div className="icon"><FaUsers className="my-icon"/></div>
-              <h2 className="card-title">{<Circle userCount={userCount} />}</h2>
+              <h2 className="card-title">{<Circle userCount={17} />}</h2>
               <p className="card-text">
                 Join a growing community of creators and viewers. Set up your profile in minutes and start engaging instantly.
               </p>
