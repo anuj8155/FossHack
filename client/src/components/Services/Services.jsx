@@ -4,118 +4,86 @@ import "./services.css";
 
 const Services = () => {
   const userVideoRef = useRef(null);
+  const chatContainerRef = useRef(null);
   const [mediaStream, setMediaStream] = useState(null);
   const [rtmpUrls, setRtmpUrls] = useState("");
+  const [accessToken, setAccessToken] = useState("");
+  const [refreshToken, setRefreshToken] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [statusMessage, setStatusMessage] = useState("");
   const [mediaRecorder, setMediaRecorder] = useState(null);
   const [currentDateTime, setCurrentDateTime] = useState("2025-02-20 09:30:53");
-  const [messages, setMessages] = useState([
-    { id: 1, platform: "Local", user: "John Doe", message: "Hello everyone!", timestamp: "09:24:15" },
-    { id: 2, platform: "Local", user: "Jane Smith", message: "Great stream!", timestamp: "09:25:30" },
-    { id: 3, platform: "Local", user: "Mike Johnson", message: "Looking forward to today's content", timestamp: "09:26:00" }
-  ]);
+  const [messages, setMessages] = useState([]); // Start with empty array
   const [newMessage, setNewMessage] = useState("");
-  const [viewerCount, setViewerCount] = useState({}); // { platform: count }
+  const [viewerCount, setViewerCount] = useState({});
   const socket = useRef(null);
-  const connectionAttempts = useRef(0);
 
   useEffect(() => {
-    // Update date and time every second
     const timer = setInterval(() => {
       const now = new Date();
-      const formatted = now.toISOString().replace('T', ' ').slice(0, 19);
-      setCurrentDateTime(formatted);
+      setCurrentDateTime(now.toISOString().replace("T", " ").slice(0, 19));
     }, 1000);
 
     socket.current = io("http://localhost:4000", {
       reconnectionAttempts: 5,
       reconnectionDelay: 1000,
-      timeout: 10000,
     });
 
-    socket.current.on("connect", () => {
-      setStatusMessage("Connected to streaming server");
-      connectionAttempts.current = 0;
-    });
-
+    socket.current.on("connect", () => setStatusMessage("Connected to server"));
     socket.current.on("disconnect", () => {
       setStatusMessage("Disconnected from server");
       setIsStreaming(false);
       stopMediaRecorder();
     });
 
-    socket.current.on("connect_error", (err) => {
-      connectionAttempts.current += 1;
-      setStatusMessage(`Connection error: ${err.message} (Attempt ${connectionAttempts.current})`);
-    });
-
     socket.current.on("stream_status", (data) => {
-      if (data.status === 'started') {
-        setIsStreaming(true);
-        setStatusMessage(`Streaming: ${data.message}`);
-      } else if (data.status === 'stopped') {
-        setIsStreaming(false);
-        setStatusMessage(`Stream stopped: ${data.message}`);
-        stopMediaRecorder();
-      } else if (data.status === 'error') {
-        setStatusMessage(`Error: ${data.message}`);
-        setIsStreaming(false);
-        stopMediaRecorder();
-      }
+      setStatusMessage(data.message);
+      setIsStreaming(data.status === "started");
+      if (data.status !== "started") stopMediaRecorder();
     });
 
     socket.current.on("chat_update", (chats) => {
-      setMessages((prev) => [
-        ...prev.filter((msg) => msg.platform === "Local"), // Keep local messages
-        ...chats.map((chat, index) => ({
-          id: prev.length + index + 1,
-          platform: chat.platform,
-          user: chat.user,
-          message: chat.message,
-          timestamp: chat.timestamp,
-        })),
-      ]);
+      console.log("Received chat_update:", chats); // Debug log
+      if (Array.isArray(chats) && chats.length > 0) {
+        setMessages((prev) => {
+          // Append only new messages, avoid duplicates by checking IDs or timestamps
+          const newMessages = chats
+            .filter((chat) => !prev.some((msg) => msg.timestamp === chat.timestamp && msg.user === chat.user && msg.message === chat.message))
+            .map((chat, index) => ({
+              id: `${chat.platform}-${Date.now()}-${index}`,
+              platform: chat.platform,
+              user: chat.user,
+              message: chat.message,
+              timestamp: chat.timestamp,
+            }));
+          return [...prev, ...newMessages];
+        });
+        if (chatContainerRef.current) {
+          chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+        }
+      }
     });
 
-    socket.current.on("viewer_update", (counts) => {
-      setViewerCount(counts); // Update viewer counts for platforms
-    });
+    socket.current.on("viewer_update", (counts) => setViewerCount(counts));
 
     getMediaStream();
 
     return () => {
       clearInterval(timer);
-      if (isStreaming) {
-        stopStreaming();
-      }
-      if (socket.current) {
-        socket.current.disconnect();
-      }
-      if (mediaStream) {
-        mediaStream.getTracks().forEach(track => track.stop());
-      }
+      if (isStreaming) stopStreaming();
+      if (socket.current) socket.current.disconnect();
+      if (mediaStream) mediaStream.getTracks().forEach((track) => track.stop());
     };
   }, []);
 
   const getMediaStream = async () => {
     try {
-      const constraints = {
+      const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 }
-        }
-      };
-      
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+      });
       setMediaStream(stream);
-      
-      if (userVideoRef.current) {
-        userVideoRef.current.srcObject = stream;
-      }
-      
+      if (userVideoRef.current) userVideoRef.current.srcObject = stream;
       setStatusMessage("Camera and microphone ready");
     } catch (error) {
       setStatusMessage(`Media access error: ${error.message}`);
@@ -124,90 +92,71 @@ const Services = () => {
 
   const stopMediaRecorder = () => {
     if (mediaRecorder) {
-      try {
-        mediaRecorder.stop();
-      } catch (error) {
-        console.error("Error stopping media recorder:", error);
-      }
+      mediaRecorder.stop();
       setMediaRecorder(null);
     }
   };
 
   const startStreaming = () => {
-    if (!mediaStream) {
-      setStatusMessage("No media stream available!");
-      return;
-    }
-
+    if (!mediaStream) return setStatusMessage("No media stream available!");
     const urlsArray = rtmpUrls
       .split(",")
       .map((url) => url.trim())
-      .filter((url) => url !== "");
-
-    if (urlsArray.length === 0) {
-      setStatusMessage("Please enter at least one RTMP URL!");
+      .filter((url) => url && (url.startsWith("rtmp://") || url.startsWith("rtmps://")));
+    
+    if (!urlsArray.length) {
+      setStatusMessage("Please enter at least one valid RTMP URL (rtmp:// or rtmps://)");
       return;
     }
 
-    const validUrls = urlsArray.every(url => 
-      url.startsWith('rtmp://') || url.startsWith('rtmps://')
-    );
+    const data = {
+      urls: urlsArray,
+      accessToken: accessToken || undefined,
+      refreshToken: refreshToken || undefined,
+    };
+    console.log("Sending to backend:", data);
+    socket.current.emit("set_rtmp_urls", data);
 
-    if (!validUrls) {
-      setStatusMessage("URLs must start with rtmp:// or rtmps://");
-      return;
-    }
-
-    socket.current.emit("set_rtmp_urls", urlsArray);
     setStatusMessage("Starting stream...");
-
-    try {
-      const recorderOptions = {
-        mimeType: 'video/webm;codecs=h264',
-        videoBitsPerSecond: 1000000,
-        audioBitsPerSecond: 128000
-      };
-      
-      const recorder = new MediaRecorder(mediaStream, recorderOptions);
-      
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && socket.current && socket.current.connected) {
-          socket.current.emit("binarystream", event.data);
-        }
-      };
-      
-      recorder.start(100);
-      setMediaRecorder(recorder);
-    } catch (error) {
-      setStatusMessage(`Failed to start stream: ${error.message}`);
-      socket.current.emit("stop_streaming");
-    }
+    const recorder = new MediaRecorder(mediaStream, {
+      mimeType: "video/webm;codecs=h264",
+      videoBitsPerSecond: 1000000,
+      audioBitsPerSecond: 128000,
+    });
+    recorder.ondataavailable = (event) => {
+      if (event.data.size > 0 && socket.current.connected) {
+        socket.current.emit("binarystream", event.data);
+      }
+    };
+    recorder.start(100);
+    setMediaRecorder(recorder);
+    setIsStreaming(true);
   };
 
   const stopStreaming = () => {
     setStatusMessage("Stopping stream...");
-    
-    if (socket.current && socket.current.connected) {
-      socket.current.emit("stop_streaming");
-    }
-    
+    socket.current.emit("stop_streaming");
     stopMediaRecorder();
     setIsStreaming(false);
+    setRtmpUrls("");
+    setAccessToken("");
+    setRefreshToken("");
+    // Optionally keep messages: comment out the next line if you want to retain chat history
+    // setMessages([]);
   };
 
   const handleSendMessage = (e) => {
     e.preventDefault();
     if (newMessage.trim()) {
-      const now = new Date();
-      const timestamp = now.toTimeString().split(' ')[0];
-      setMessages(prev => [...prev, {
-        id: prev.length + 1,
-        platform: "Local",
-        user: "anuj8155",
-        message: newMessage.trim(),
-        timestamp: timestamp
-      }]);
+      const timestamp = new Date().toTimeString().split(" ")[0];
+      setMessages((prev) => [
+        ...prev,
+        { id: `${Date.now()}`, platform: "Local", user: "anuj8155", message: newMessage.trim(), timestamp },
+      ]);
       setNewMessage("");
+      if (chatContainerRef.current) {
+        chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+      }
     }
   };
 
@@ -262,11 +211,11 @@ const Services = () => {
         <div className="chat-section">
           <div className="chat-header">
             <h3>Live Chat</h3>
-            <span className="chat-status">{isStreaming ? 'Live Chat' : 'Chat Disabled'}</span>
+            <span className="chat-status">{isStreaming ? "Live Chat" : "Chat Disabled"}</span>
           </div>
           
-          <div className="chat-messages">
-            {messages.map(msg => (
+          <div className="chat-messages" ref={chatContainerRef}>
+            {messages.map((msg) => (
               <div key={msg.id} className="chat-message">
                 <span className="message-timestamp">{msg.timestamp}</span>
                 <span className="message-platform">{msg.platform}</span>
@@ -298,7 +247,7 @@ const Services = () => {
         <div className="stream-controls">
           <div className="status-panel">
             <h3>Stream Status</h3>
-            <div className={`status-indicator ${isStreaming ? 'live' : 'ready'}`}>
+            <div className={`status-indicator ${isStreaming ? "live" : "ready"}`}>
               {statusMessage}
             </div>
           </div>
@@ -323,19 +272,20 @@ const Services = () => {
             <label>RTMP URL</label>
             <textarea
               className="rtmp-input"
-              placeholder="Enter your RTMP URL"
+              placeholder="Enter your RTMP URL (e.g., rtmp://...)"
               value={rtmpUrls}
               onChange={(e) => setRtmpUrls(e.target.value)}
               disabled={isStreaming}
             />
+
           </div>
 
           <button
             onClick={isStreaming ? stopStreaming : startStreaming}
-            className={`stream-button ${isStreaming ? 'stop' : 'start'}`}
+            className={`stream-button ${isStreaming ? "stop" : "start"}`}
             disabled={!mediaStream}
           >
-            {isStreaming ? 'End Stream' : 'Go Live'}
+            {isStreaming ? "End Stream" : "Go Live"}
           </button>
         </div>
       </div>
