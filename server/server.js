@@ -2,240 +2,265 @@ const http = require("http");
 const express = require("express");
 const SocketIO = require("socket.io").Server;
 const { spawn } = require("child_process");
+const { google } = require("googleapis");
+
 const app = express();
 const server = http.createServer(app);
 const io = new SocketIO(server, { cors: { origin: "*" } });
 const port = process.env.PORT || 4000;
 
+const defaultOauth2Client = new google.auth.OAuth2(
+  process.env.YOUTUBE_CLIENT_ID,
+  process.env.YOUTUBE_CLIENT_SECRET,
+  "http://localhost:4000/oauth2callback"
+);
 
+defaultOauth2Client.setCredentials({
+  access_token: process.env.YOUTUBE_ACCESS_TOKEN,
+  refresh_token: process.env.YOUTUBE_REFRESH_TOKEN,
+});
+
+console.log("Default OAuth2Client credentials:", defaultOauth2Client.credentials);
+
+const oauthClients = new Map();
 let ffmpegProcesses = new Map();
+let liveChatPolling = new Map();
 
-let viewerCounts = new Map();
-let platformChats = new Map(); 
+const getAuthUrl = () => {
+  return defaultOauth2Client.generateAuthUrl({
+    access_type: "offline",
+    scope: ["https://www.googleapis.com/auth/youtube.readonly"],
+  });
+};
 
-
-
-// Function to start FFmpeg for multiple RTMP URLs
-const startFFmpeg = (urls, socketId) => {
-  if (ffmpegProcesses.has(socketId)) {
-    try {
-      const oldProcess = ffmpegProcesses.get(socketId);
-      console.log(`Killing previous FFmpeg process for ${socketId}`);
-      oldProcess.stdin.end();
-      oldProcess.kill("SIGINT");
-    } catch (err) {
-      console.error(`Error stopping previous FFmpeg: ${err.message}`);
-    }
-  }
-
-  console.log(`Starting FFmpeg for socket ${socketId} with URLs:`, urls);
-  
+app.get("/oauth2callback", async (req, res) => {
+  const code = req.query.code;
   try {
-    const outputArgs = [];
-    urls.forEach(url => {
-      outputArgs.push('-f', 'flv', url);
-    });
-    
-    const args = [
-      '-re', '-i', 'pipe:0', '-c:v', 'libx264', '-preset', 'veryfast',
-      '-tune', 'zerolatency', '-b:v', '1000k', '-maxrate', '1000k',
-      '-bufsize', '2000k', '-g', '30', '-r', '30', '-c:a', 'aac',
-      '-b:a', '128k', '-ar', '44100', '-f', 'tee', '-map', '0:v', '-map', '0:a'
-    ];
-    
-    const teeOutputs = urls.map(url => `[f=flv:onfail=ignore]${url}`).join('|');
-    args.push(teeOutputs);
-    
-    console.log("FFmpeg command:", "ffmpeg", args.join(' '));
-    
-    const ffmpeg = spawn('ffmpeg', args);
-    
-    ffmpeg.stderr.setEncoding('utf8');
-    ffmpeg.stderr.on('data', (data) => {
-      if (data.includes('Error') || data.includes('warning') || 
-          data.includes('Opening') || data.includes('frame=')) {
-        console.log(`[FFmpeg ${socketId}] ${data.trim()}`);
-      }
-    });
-    
-    ffmpeg.on('error', (err) => {
-      console.error(`FFmpeg process error: ${err.message}`);
-      io.to(socketId).emit('stream_status', {
-        status: 'error',
-        message: `FFmpeg error: ${err.message}`
-      });
-    });
-    
-    ffmpeg.on('exit', (code, signal) => {
-      console.log(`FFmpeg process exited with code ${code} and signal ${signal}`);
-      ffmpegProcesses.delete(socketId);
-      io.to(socketId).emit('stream_status', {
-        status: 'stopped',
-        message: `Stream ended (code: ${code})`
-      });
-    });
-    
-    ffmpegProcesses.set(socketId, ffmpeg);
-    io.to(socketId).emit('stream_status', {
-      status: 'started',
-      message: `Streaming to ${urls.length} destination(s)`
-    });
-    
-    return ffmpeg;
+    const { tokens } = await defaultOauth2Client.getToken(code);
+    console.log("New Access Token:", tokens.access_token);
+    console.log("New Refresh Token (save this!):", tokens.refresh_token);
+    res.send("Authorization successful! Check server logs for tokens.");
   } catch (error) {
-    console.error(`Failed to start FFmpeg: ${error.message}`);
-    io.to(socketId).emit('stream_status', {
-      status: 'error',
-      message: `Failed to start FFmpeg: ${error.message}`
-    });
+    console.error("OAuth error:", error.message);
+    res.status(500).send("OAuth failed");
+  }
+});
+
+const startFFmpeg = (urls, socketId) => {
+  if (!Array.isArray(urls) || urls.length === 0) {
+    console.error(`Invalid or missing RTMP URLs for ${socketId}`);
+    io.to(socketId).emit("stream_status", { status: "error", message: "No valid RTMP URLs provided" });
     return null;
   }
+
+  if (ffmpegProcesses.has(socketId)) {
+    const oldProcess = ffmpegProcesses.get(socketId);
+    oldProcess.stdin.end();
+    oldProcess.kill("SIGINT");
+    ffmpegProcesses.delete(socketId);
+    console.log(`Stopped previous FFmpeg process for ${socketId}`);
+  }
+
+  const ffmpeg = spawn("ffmpeg", [
+    "-re",
+    "-i",
+    "pipe:0",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "veryfast",
+    "-tune",
+    "zerolatency",
+    "-b:v",
+    "1000k",
+    "-maxrate",
+    "1000k",
+    "-bufsize",
+    "2000k",
+    "-g",
+    "30",
+    "-r",
+    "30",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "128k",
+    "-ar",
+    "44100",
+    "-f",
+    "tee",
+    "-map",
+    "0:v",
+    "-map",
+    "0:a",
+    urls.map((url) => `[f=flv:onfail=ignore]${url}`).join("|"),
+  ]);
+
+  ffmpeg.stderr.on("data", (data) => console.log(`[FFmpeg ${socketId}] ${data}`));
+  ffmpeg.on("exit", () => {
+    ffmpegProcesses.delete(socketId);
+    io.to(socketId).emit("stream_status", { status: "stopped", message: "Stream ended" });
+  });
+  ffmpegProcesses.set(socketId, ffmpeg);
+  io.to(socketId).emit("stream_status", { status: "started", message: `Streaming to ${urls.length} destination(s)` });
+  return ffmpeg;
 };
 
-// Simulate platform data with fixed viewer counts
-const simulatePlatformData = (socketId, urls) => {
-  // Predefined viewer counts for testing
-  const predefinedCounts = {
-    "Instagram": 30,
-    "YouTube": 3000,
-    "Facebook": 49,
-    "Twitch": 75, // Example additional platform, adjust as needed
-    "Unknown": 10 // Default for unrecognizable URLs
+const fetchYouTubeLiveChat = async (socketId, oauthClient) => {
+  const youtube = google.youtube({ version: "v3", auth: oauthClient });
+
+  if (liveChatPolling.has(socketId)) {
+    clearInterval(liveChatPolling.get(socketId));
+    liveChatPolling.delete(socketId);
+    console.log(`Cleared previous live chat polling for ${socketId}`);
+  }
+
+  let attempts = 0;
+  const maxAttempts = 10;
+
+  const tryFetchBroadcast = async () => {
+    try {
+      console.log(`Attempt ${attempts + 1}/${maxAttempts} to fetch broadcasts for socket: ${socketId}`);
+      console.log(`Using credentials for ${socketId}:`, oauthClient.credentials);
+      const broadcastRes = await youtube.liveBroadcasts.list({
+        part: "id,snippet",
+        mine: true,
+        maxResults: 10,
+      });
+
+      console.log(`Full API response for ${socketId}:`, JSON.stringify(broadcastRes.data, null, 2));
+
+      if (!broadcastRes.data.items || broadcastRes.data.items.length === 0) {
+        throw new Error("No broadcasts found in response");
+      }
+
+      const activeBroadcast = broadcastRes.data.items.find(
+        (item) => item.snippet.liveChatId && item.snippet.actualStartTime && !item.snippet.actualEndTime
+      );
+
+      if (!activeBroadcast) {
+        console.log(`No active broadcast found for ${socketId}. All broadcasts:`, broadcastRes.data.items);
+        throw new Error("No active broadcast with live chat found");
+      }
+
+      const liveChatId = activeBroadcast.snippet.liveChatId;
+      console.log(`Found liveChatId for ${socketId}: ${liveChatId}`);
+
+      let nextPageToken = null;
+      const interval = setInterval(async () => {
+        try {
+          const chatRes = await youtube.liveChatMessages.list({
+            part: "snippet,authorDetails",
+            liveChatId: liveChatId,
+            pageToken: nextPageToken,
+          });
+
+          const messages = chatRes.data.items.map((item) => ({
+            platform: "YouTube",
+            user: item.authorDetails.displayName || "Unknown",
+            message: item.snippet.displayMessage || "No message",
+            timestamp: new Date(item.snippet.publishedAt).toTimeString().split(" ")[0],
+          }));
+
+          console.log(`Emitting chat messages for ${socketId}:`, messages);
+          io.to(socketId).emit("chat_update", messages);
+          nextPageToken = chatRes.data.nextPageToken;
+        } catch (error) {
+          console.error(`Chat polling error for ${socketId}: ${error.message}`);
+        }
+      }, 5000);
+
+      liveChatPolling.set(socketId, interval);
+
+      setInterval(() => {
+        io.to(socketId).emit("viewer_update", { YouTube: Math.floor(Math.random() * 1000) + 100 });
+      }, 5000);
+    } catch (error) {
+      console.error(`YouTube API error for ${socketId}: ${error.message}`);
+      attempts++;
+      if (attempts < maxAttempts) {
+        console.log(`Retrying in 5 seconds... (${attempts}/${maxAttempts})`);
+        setTimeout(tryFetchBroadcast, 5000);
+      } else {
+        io.to(socketId).emit("stream_status", { status: "error", message: `Failed to find active broadcast after ${maxAttempts} attempts: ${error.message}` });
+      }
+    }
   };
 
-  setInterval(() => {
-    const counts = {};
-    const chats = platformChats.get(socketId) || [];
-    
-    urls.forEach((url) => {
-      let platform = "Unknown";
-      if (url.includes("instagram")) platform = "Instagram";
-      else if (url.includes("youtube")) platform = "YouTube";
-      else if (url.includes("facebook")) platform = "Facebook";
-      else if (url.includes("twitch")) platform = "Twitch";
-
-      // Assign predefined viewer count based on platform
-      counts[platform] = predefinedCounts[platform] || predefinedCounts["Unknown"];
-
-      // Simulate chat messages (unchanged from original)
-      chats.push({
-        platform,
-        user: `User_${Math.floor(Math.random() * 1000)}`,
-        message: `Sample message from ${platform}`,
-        timestamp: new Date().toTimeString().split(" ")[0],
-      });
-    });
-
-    viewerCounts.set(socketId, counts);
-    platformChats.set(socketId, chats.slice(-50)); // Keep last 50 messages
-    io.to(socketId).emit("viewer_update", counts);
-    io.to(socketId).emit("chat_update", platformChats.get(socketId));
-  }, 5000); // Update every 5 seconds
+  tryFetchBroadcast();
 };
 
-
-
-app.post('/api/increment-counter', (req, res) => {
-    liveCounter++;
-    res.json({ counter: liveCounter });
-});
-
-app.get('/api/get-counter', (req, res) => {
-    res.json({ counter: liveCounter });
-});
-
-app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
-});
-
-// Socket connection handler
 io.on("connection", (socket) => {
   console.log(`New client connected: ${socket.id}`);
-  
-  socket.on("set_rtmp_urls", (urls) => {
-    console.log(`Received RTMP URLs from ${socket.id}:`, urls);
+
+  socket.on("set_rtmp_urls", (data) => {
+    console.log(`Received data from ${socket.id}:`, data);
+    const { urls, accessToken, refreshToken } = data || {};
+
+    let oauthClient;
+    if (accessToken && refreshToken) {
+      oauthClient = new google.auth.OAuth2(
+        process.env.YOUTUBE_CLIENT_ID,
+        process.env.YOUTUBE_CLIENT_SECRET,
+        "http://localhost:4000/oauth2callback"
+      );
+      oauthClient.setCredentials({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      oauthClient.on("tokens", (tokens) => {
+        console.log(`New Access Token for ${socket.id}:`, tokens.access_token);
+        if (tokens.refresh_token) console.log(`New Refresh Token for ${socket.id}:`, tokens.refresh_token);
+      });
+      oauthClients.set(socket.id, oauthClient);
+      console.log(`Set custom OAuth client for ${socket.id}`);
+    } else {
+      oauthClient = defaultOauth2Client;
+      console.log(`Using default OAuth client for ${socket.id}`);
+    }
+
     startFFmpeg(urls, socket.id);
-    simulatePlatformData(socket.id, urls);
+    fetchYouTubeLiveChat(socket.id, oauthClient);
   });
-  
+
   socket.on("binarystream", (chunk) => {
     const ffmpeg = ffmpegProcesses.get(socket.id);
-    if (!ffmpeg) {
-      console.log(`No FFmpeg process for ${socket.id}, ignoring stream data`);
-      socket.emit('stream_status', { status: 'error', message: 'FFmpeg not running' });
-      return;
-    }
-    try {
-      const success = ffmpeg.stdin.write(chunk);
-      if (!success) {
-        console.log(`Buffer full for ${socket.id}, waiting for drain`);
-        ffmpeg.stdin.once('drain', () => {
-          console.log(`Buffer drained for ${socket.id}`);
-        });
-      }
-    } catch (error) {
-      console.error(`Error writing to FFmpeg: ${error.message}`);
-      socket.emit('stream_status', { status: 'error', message: `Stream write error: ${error.message}` });
-    }
+    if (!ffmpeg) return;
+    ffmpeg.stdin.write(chunk);
   });
-  
+
   socket.on("stop_streaming", () => {
-    console.log(`Stop streaming requested by ${socket.id}`);
     if (ffmpegProcesses.has(socket.id)) {
       const ffmpeg = ffmpegProcesses.get(socket.id);
-      console.log(`Stopping FFmpeg for ${socket.id}`);
-      try {
-        ffmpeg.stdin.end();
-        setTimeout(() => {
-          if (ffmpegProcesses.has(socket.id)) {
-            ffmpeg.kill('SIGKILL');
-          }
-        }, 2000);
-      } catch (error) {
-        console.error(`Error stopping FFmpeg: ${error.message}`);
-      }
-      ffmpegProcesses.delete(socket.id);
-      socket.emit('stream_status', { status: 'stopped', message: 'Stream stopped by user' });
-    }
-  });
-  
-  socket.on("disconnect", () => {
-    console.log(`Client disconnected: ${socket.id}`);
-    if (ffmpegProcesses.has(socket.id)) {
-      const ffmpeg = ffmpegProcesses.get(socket.id);
-      console.log(`Cleaning up FFmpeg for disconnected client ${socket.id}`);
-      try {
-        ffmpeg.stdin.end();
-        ffmpeg.kill('SIGINT');
-      } catch (error) {
-        console.error(`Error during cleanup: ${error.message}`);
-      }
-      ffmpegProcesses.delete(socket.id);
-    }
-    viewerCounts.delete(socket.id);
-    platformChats.delete(socket.id);
-  });
-});
-
-// Handle process termination
-process.on('SIGINT', () => {
-  console.log('Shutting down server...');
-  for (const [socketId, ffmpeg] of ffmpegProcesses.entries()) {
-    console.log(`Terminating FFmpeg for ${socketId}`);
-    try {
       ffmpeg.stdin.end();
-      ffmpeg.kill('SIGINT');
-    } catch (error) {
-      console.error(`Error terminating FFmpeg: ${error.message}`);
+      ffmpeg.kill("SIGINT");
+      ffmpegProcesses.delete(socket.id);
     }
-  }
-  setTimeout(() => {
-    console.log('Exiting...');
-    process.exit(0);
-  }, 1000);
+    if (liveChatPolling.has(socket.id)) {
+      clearInterval(liveChatPolling.get(socket.id));
+      liveChatPolling.delete(socket.id);
+    }
+    console.log(`Stopped streaming for ${socket.id}`);
+  });
+
+  socket.on("disconnect", () => {
+    if (ffmpegProcesses.has(socket.id)) {
+      ffmpegProcesses.get(socket.id).stdin.end();
+      ffmpegProcesses.get(socket.id).kill("SIGINT");
+      ffmpegProcesses.delete(socket.id);
+    }
+    if (liveChatPolling.has(socket.id)) {
+      clearInterval(liveChatPolling.get(socket.id));
+      liveChatPolling.delete(socket.id);
+    }
+    oauthClients.delete(socket.id);
+    console.log(`Client disconnected: ${socket.id}`);
+  });
 });
 
-// Start the server
 server.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
+  if (!process.env.YOUTUBE_ACCESS_TOKEN || !process.env.YOUTUBE_REFRESH_TOKEN) {
+    console.log("Visit this URL to authorize default account:", getAuthUrl());
+  }
 });
